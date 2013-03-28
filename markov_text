@@ -4,7 +4,7 @@ require 'optparse'
 require 'set'
 require 'ostruct'
 
-$options = OpenStruct.new({ start_at_word: nil, hard_limit: nil })
+$options = OpenStruct.new(start_at_word: nil, hard_limit: nil)
 OptionParser.new do |opts|
   opts.banner = "Usage: markov_text [options]"
 
@@ -37,9 +37,9 @@ module RouletteSample
       cur_range_min += value
     end
 
-    val_number = rand * total
+    random_index = rand * total
 
-    sampled_elem = number_ranges.find { |e, (min, max)| val_number >= min && val_number <= max }
+    sampled_elem = number_ranges.find { |e, (min, max)| random_index >= min && random_index <= max }
 
     sampled_elem.first if sampled_elem
   end
@@ -48,6 +48,8 @@ end
 class MarkovText
   include RouletteSample
 
+  SENTENCE_DELIMETERS = /[.!?]/
+
   attr_reader :word_hash, :text
 
   def initialize(text)
@@ -55,8 +57,6 @@ class MarkovText
     @word_hash = Hash.new
     @text = text
     add_text(text)
-
-    #binding.pry
   end
 
   def sentence_starters
@@ -75,7 +75,7 @@ class MarkovText
   end
 
   def to_sentences(text)
-    text.split(/[.!?]/)
+    text.split(SENTENCE_DELIMETERS)
   end
 
   def wordify(text)
