@@ -1,0 +1,159 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'set'
+require 'ostruct'
+
+$options = OpenStruct.new({ start_at_word: nil, hard_limit: nil })
+OptionParser.new do |opts|
+  opts.banner = "Usage: markov_text [options]"
+
+  opts.on('-m', '--min-length N', 'Gives markov sentence a minimum length of N words') do |m|
+    $options.min_length = m.to_i
+  end
+
+  opts.on('-h', '--[no-]hard-limit', 'with a maximum length, indicates that the sentence should be exactly that length') do |h|
+    $options.hard_limit = h
+  end
+
+  opts.on('-M', '--max-length N', 'Gives markov sentence a maximum length of N words') do |m|
+    $options.max_length = m.to_i
+  end
+
+  opts.on('-s', '--start-with WORD', 'Start with WORD') do |s|
+    $options.start_at_word = s
+  end
+end.parse!
+
+module RouletteSample
+  def roulette_sample(pairs)
+    pairs = pairs.to_a
+    total = pairs.map(&:last).reduce(:+)
+    number_ranges = {}
+    cur_range_min = 0
+
+    pairs.each do |elem, value|
+      number_ranges[elem] = [cur_range_min, cur_range_min + value]
+      cur_range_min += value
+    end
+
+    val_number = rand * total
+
+    sampled_elem = number_ranges.find { |e, (min, max)| val_number >= min && val_number <= max }
+
+    sampled_elem.first if sampled_elem
+  end
+end
+
+class MarkovText
+  include RouletteSample
+
+  attr_reader :word_hash, :text
+
+  def initialize(text)
+    @sentences = to_sentences(text)
+    @word_hash = Hash.new
+    @text = text
+    add_text(text)
+
+    #binding.pry
+  end
+
+  def sentence_starters
+    @sentences.map { |sentence| wordify(sentence) }.map(&:first).compact
+  end
+
+  def sentence_enders
+    @sentence_enders ||= Set.new(wordify(text).select { |word| word =~ /\w+[.?!]/ && !(word =~ /[,:;]/)})
+  end
+
+  def add_text(text)
+    words = wordify(text)
+    words.each_with_index do |word, i|
+      add(word, words[i+1]) unless words[i+1] == word
+    end
+  end
+
+  def to_sentences(text)
+    text.split(/[.!?]/)
+  end
+
+  def wordify(text)
+    text.strip.gsub(/\s+/, ' ').split(' ').reject(&:empty?)
+  end
+
+  def to_key(word)
+    word.downcase.gsub(/[-_'"]/, '')
+  end
+
+  def add(word, next_word)
+    return unless word && next_word
+    @word_hash[to_key(word)] ||= Hash.new(0)
+    @word_hash[to_key(word)][next_word] += 1
+  end
+
+  def random_sentence(start_at, min_length=nil, max_length=nil, hard_limit=false)
+    if start_at
+      cur_word = start_at
+    else
+      cur_word = sentence_starters.sample.capitalize
+    end
+
+    sentence = []
+    min_length ||= 1
+    max_length ||= 100
+
+    while true do
+      unless cur_word
+        break
+      end
+
+      sentence << cur_word
+
+      if hard_limit
+        break if sentence.length == max_length
+      else
+        below_max_length = sentence.length <= max_length
+        min_length_exceeded = sentence.length >= min_length
+
+        if !below_max_length
+          break if sentence_enders.include?(cur_word)
+        end
+
+        if min_length_exceeded && sentence_enders.include?(cur_word)
+          break if rand(4) == 0
+        end
+      end
+
+      cur_word = markov_next(cur_word)
+    end
+
+    sentence.join(' ')
+  end
+
+  def possible_words_after(word)
+    hash = @word_hash[to_key(word)]
+    hash ? hash.keys : []
+  end
+
+  def markov_next(word)
+    possible_words = possible_words_after(word)
+    return nil if possible_words.empty?
+
+    word_value_pairs = possible_words.map do |poss_word|
+      [poss_word, @word_hash[to_key(word)][poss_word]]
+    end
+
+    roulette_sample(word_value_pairs)
+  end
+end
+
+if !ARGV[0] || ARGV[0] == '-'
+  infile = $stdin.read
+else
+  infile = File.read ARGV[0]
+end
+
+markov = MarkovText.new(infile)
+
+puts markov.random_sentence($options.start_at_word, $options.min_length, $options.max_length, $options.hard_limit)
